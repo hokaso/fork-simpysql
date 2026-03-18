@@ -4,6 +4,7 @@
 
 from .Eloquent.BuilderFactory import builderfactory
 from .Util.MagicMetaClass import MagicMetaClass
+from functools import wraps
 import time
 
 
@@ -26,7 +27,27 @@ class DBModel(MagicMetaClass):
 
     @classmethod
     def transaction(cls, callback):
-        return cls.__new__(cls).transaction(callback)
+        """
+        事务装饰器/方法
+        
+        用法1 - 装饰器方式:
+            @ModelDemo.transaction
+            def demo(id):
+                ModelDemo.where('id', id).update({'name': "44"})
+                return True
+            demo(42)
+        
+        用法2 - 直接调用方式:
+            def demo():
+                ModelDemo.where('id', 42).update({'name': "44"})
+                return True
+            result = ModelDemo.transaction(demo)()
+        """
+        builder = cls.__new__(cls)
+        @wraps(callback)
+        def wrapper(*args, **kwargs):
+            return builder._get_connection().transaction(lambda: callback(*args, **kwargs))
+        return wrapper
 
     def __new__(cls, *args, **kwargs):
         if len(args) > 0 and isinstance(args[0], str):

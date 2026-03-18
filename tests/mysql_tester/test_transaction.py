@@ -2,126 +2,171 @@
 # -*- coding: utf-8 -*-
 """
 simpysql MySQL 测试 - 事务方法
-测试方法: transaction, transaction_wrapper
+测试方法: transaction (装饰器方式和直接调用方式)
 """
 
 import pytest
 from tests.mysql_tester.models import User, Order, Product, Article
 
 
-class TestTransaction:
-    """测试 transaction() 方法"""
+class TestTransactionDecorator:
+    """测试 @Model.transaction 装饰器方式"""
     
     @pytest.mark.transaction
-    def test_transaction_commit(self, clean_users):
-        """测试事务提交"""
+    def test_transaction_decorator_commit(self, clean_users):
+        """测试装饰器方式事务提交"""
+        @User.transaction
         def create_user():
-            clean_users.create({'name': 'TransactionCommit', 'email': 'transcommit@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+            clean_users.create({'name': 'DecoratorCommit', 'email': 'decorator@test.com', 'age': 25, 'status': 1, 'score': 80.0})
             return True
         
-        result = clean_users.transaction(create_user)
+        result = create_user()
         assert result is True
         
         # 验证数据已提交
-        user = clean_users.where('name', 'TransactionCommit').first()
+        user = clean_users.where('name', 'DecoratorCommit').first()
         assert user is not None
     
     @pytest.mark.transaction
-    def test_transaction_rollback(self, clean_users):
-        """测试事务回滚"""
+    def test_transaction_decorator_rollback(self, clean_users):
+        """测试装饰器方式事务回滚"""
         # 先插入一条数据
-        clean_users.create({'name': 'BeforeRollback', 'email': 'before@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+        clean_users.create({'name': 'BeforeDecoratorRollback', 'email': 'before@test.com', 'age': 25, 'status': 1, 'score': 80.0})
         
+        @User.transaction
         def failed_operation():
             # 更新数据
-            clean_users.where('name', 'BeforeRollback').update({'age': 100})
+            clean_users.where('name', 'BeforeDecoratorRollback').update({'age': 100})
             # 然后抛出异常
             raise Exception('Intentional rollback test')
         
         # 事务应该捕获异常并回滚
         with pytest.raises(Exception):
-            clean_users.transaction(failed_operation)
+            failed_operation()
         
         # 验证数据已回滚
-        user = clean_users.where('name', 'BeforeRollback').first()
+        user = clean_users.where('name', 'BeforeDecoratorRollback').first()
         age = user['age'] if isinstance(user, dict) else user.age
         assert age == 25  # 应该是原始值，不是100
     
     @pytest.mark.transaction
-    def test_transaction_multiple_operations(self, clean_users):
-        """测试事务中多个操作"""
-        def multiple_operations():
-            clean_users.create({'name': 'MultiOp1', 'email': 'multi1@test.com', 'age': 25, 'status': 1, 'score': 80.0})
-            clean_users.create({'name': 'MultiOp2', 'email': 'multi2@test.com', 'age': 30, 'status': 1, 'score': 85.0})
-            clean_users.where('name', 'MultiOp1').update({'age': 26})
+    def test_transaction_decorator_with_params(self, clean_users):
+        """测试装饰器方式带参数的事务"""
+        @User.transaction
+        def create_user_with_params(name, email, age):
+            clean_users.create({'name': name, 'email': email, 'age': age, 'status': 1, 'score': 80.0})
             return True
         
-        result = clean_users.transaction(multiple_operations)
+        result = create_user_with_params('ParamsUser', 'params@test.com', 30)
+        assert result is True
+        
+        # 验证数据已提交
+        user = clean_users.where('name', 'ParamsUser').first()
+        assert user is not None
+        age = user['age'] if isinstance(user, dict) else user.age
+        assert age == 30
+    
+    @pytest.mark.transaction
+    def test_transaction_decorator_multiple_operations(self, clean_users):
+        """测试装饰器方式事务中多个操作"""
+        @User.transaction
+        def multiple_operations():
+            clean_users.create({'name': 'DecoratorMulti1', 'email': 'multi1@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+            clean_users.create({'name': 'DecoratorMulti2', 'email': 'multi2@test.com', 'age': 30, 'status': 1, 'score': 85.0})
+            clean_users.where('name', 'DecoratorMulti1').update({'age': 26})
+            return True
+        
+        result = multiple_operations()
         assert result is True
         
         # 验证所有操作都已提交
-        count = clean_users.where('name', 'like', 'MultiOp%').count()
+        count = clean_users.where('name', 'like', 'DecoratorMulti%').count()
         assert count == 2
         
-        user1 = clean_users.where('name', 'MultiOp1').first()
+        user1 = clean_users.where('name', 'DecoratorMulti1').first()
         age = user1['age'] if isinstance(user1, dict) else user1.age
         assert age == 26
     
     @pytest.mark.transaction
-    def test_transaction_return_value(self, clean_users):
-        """测试事务返回值"""
+    def test_transaction_decorator_return_value(self, clean_users):
+        """测试装饰器方式事务返回值"""
+        @User.transaction
         def get_user_count():
-            clean_users.create({'name': 'ReturnTest', 'email': 'return@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+            clean_users.create({'name': 'DecoratorReturn', 'email': 'return@test.com', 'age': 25, 'status': 1, 'score': 80.0})
             return clean_users.count()
         
-        result = clean_users.transaction(get_user_count)
+        result = get_user_count()
         assert result >= 1
     
     @pytest.mark.transaction
-    def test_transaction_with_closure(self, clean_users):
-        """测试事务闭包捕获变量"""
-        name = 'ClosureTest'
+    def test_transaction_decorator_with_closure(self, clean_users):
+        """测试装饰器方式事务闭包捕获变量"""
+        name = 'DecoratorClosure'
         
+        @User.transaction
         def create_user_with_name():
             clean_users.create({'name': name, 'email': f'{name.lower()}@test.com', 'age': 25, 'status': 1, 'score': 80.0})
             return name
         
-        result = clean_users.transaction(create_user_with_name)
+        result = create_user_with_name()
         assert result == name
 
 
-class TestTransactionWrapper:
-    """测试 transaction_wrapper() 方法"""
+class TestTransactionDirectCall:
+    """测试 Model.transaction(func)() 直接调用方式"""
     
     @pytest.mark.transaction
-    def test_transaction_wrapper_commit(self, clean_users):
-        """测试 transaction_wrapper 提交"""
+    def test_transaction_direct_call_commit(self, clean_users):
+        """测试直接调用方式事务提交"""
         def create_user():
-            clean_users.create({'name': 'WrapperCommit', 'email': 'wrapper@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+            clean_users.create({'name': 'DirectCallCommit', 'email': 'direct@test.com', 'age': 25, 'status': 1, 'score': 80.0})
             return True
         
-        # transaction_wrapper 返回一个wrapper函数，需要调用它
-        result = clean_users.transaction_wrapper(create_user)()
+        result = clean_users.transaction(create_user)()
         assert result is True
         
         # 验证数据已提交
-        user = clean_users.where('name', 'WrapperCommit').first()
+        user = clean_users.where('name', 'DirectCallCommit').first()
         assert user is not None
     
     @pytest.mark.transaction
-    def test_transaction_wrapper_rollback(self, clean_users):
-        """测试 transaction_wrapper 回滚"""
-        def failed_operation():
-            clean_users.create({'name': 'WrapperRollback', 'email': 'wrapper@test.com', 'age': 25, 'status': 1, 'score': 80.0})
-            raise Exception('Intentional rollback')
+    def test_transaction_direct_call_rollback(self, clean_users):
+        """测试直接调用方式事务回滚"""
+        # 先插入一条数据
+        clean_users.create({'name': 'BeforeDirectRollback', 'email': 'before@test.com', 'age': 25, 'status': 1, 'score': 80.0})
         
+        def failed_operation():
+            # 更新数据
+            clean_users.where('name', 'BeforeDirectRollback').update({'age': 100})
+            # 然后抛出异常
+            raise Exception('Intentional rollback test')
+        
+        # 事务应该捕获异常并回滚
         with pytest.raises(Exception):
-            # transaction_wrapper 返回一个wrapper函数，需要调用它
-            clean_users.transaction_wrapper(failed_operation)()
+            clean_users.transaction(failed_operation)()
         
         # 验证数据已回滚
-        user = clean_users.where('name', 'WrapperRollback').first()
-        assert user is None or user == {}
+        user = clean_users.where('name', 'BeforeDirectRollback').first()
+        age = user['age'] if isinstance(user, dict) else user.age
+        assert age == 25  # 应该是原始值，不是100
+
+
+class TestTransactionInstanceMethod:
+    """测试实例级别的 transaction 方法"""
+    
+    @pytest.mark.transaction
+    def test_instance_transaction_commit(self, clean_users):
+        """测试实例级别 transaction 方法提交"""
+        def create_user():
+            clean_users.create({'name': 'InstanceCommit', 'email': 'instance@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+            return True
+        
+        result = clean_users.transaction(create_user)()
+        assert result is True
+        
+        # 验证数据已提交
+        user = clean_users.where('name', 'InstanceCommit').first()
+        assert user is not None
 
 
 class TestTransactionClassMethod:
@@ -138,33 +183,35 @@ class TestTransactionExceptions:
     """测试事务异常处理"""
     
     @pytest.mark.transaction
-    def test_transaction_with_division_error(self, clean_users):
-        """测试事务中的除零错误"""
+    def test_transaction_decorator_with_division_error(self, clean_users):
+        """测试装饰器方式事务中的除零错误"""
+        @User.transaction
         def division_error():
-            clean_users.create({'name': 'DivError', 'email': 'diverror@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+            clean_users.create({'name': 'DecoratorDivError', 'email': 'diverror@test.com', 'age': 25, 'status': 1, 'score': 80.0})
             x = 1 / 0  # 除零错误
             return x
         
         with pytest.raises(Exception):
-            clean_users.transaction(division_error)
+            division_error()
         
         # 验证数据已回滚
-        user = clean_users.where('name', 'DivError').first()
+        user = clean_users.where('name', 'DecoratorDivError').first()
         assert user is None or user == {}
     
     @pytest.mark.transaction
-    def test_transaction_with_key_error(self, clean_users):
-        """测试事务中的键错误"""
+    def test_transaction_decorator_with_key_error(self, clean_users):
+        """测试装饰器方式事务中的键错误"""
+        @User.transaction
         def key_error():
-            clean_users.create({'name': 'KeyError', 'email': 'keyerror@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+            clean_users.create({'name': 'DecoratorKeyError', 'email': 'keyerror@test.com', 'age': 25, 'status': 1, 'score': 80.0})
             d = {}
             return d['non_existent_key']  # 键错误
         
         with pytest.raises(Exception):
-            clean_users.transaction(key_error)
+            key_error()
         
         # 验证数据已回滚
-        user = clean_users.where('name', 'KeyError').first()
+        user = clean_users.where('name', 'DecoratorKeyError').first()
         assert user is None or user == {}
 
 
@@ -172,50 +219,53 @@ class TestTransactionComplex:
     """测试复杂事务场景"""
     
     @pytest.mark.transaction
-    def test_transaction_select_and_update(self, clean_users):
-        """测试事务中的查询和更新操作"""
+    def test_transaction_decorator_select_and_update(self, clean_users):
+        """测试装饰器方式事务中的查询和更新操作"""
+        @User.transaction
         def select_and_update():
             # 先插入
-            clean_users.create({'name': 'SelectUpdate', 'email': 'selectupdate@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+            clean_users.create({'name': 'DecoratorSelectUpdate', 'email': 'selectupdate@test.com', 'age': 25, 'status': 1, 'score': 80.0})
             # 查询
-            user = clean_users.where('name', 'SelectUpdate').first()
+            user = clean_users.where('name', 'DecoratorSelectUpdate').first()
             # 更新
-            clean_users.where('name', 'SelectUpdate').update({'age': 30})
+            clean_users.where('name', 'DecoratorSelectUpdate').update({'age': 30})
             return True
         
-        result = clean_users.transaction(select_and_update)
+        result = select_and_update()
         assert result is True
         
         # 验证最终状态
-        user = clean_users.where('name', 'SelectUpdate').first()
+        user = clean_users.where('name', 'DecoratorSelectUpdate').first()
         age = user['age'] if isinstance(user, dict) else user.age
         assert age == 30
     
     @pytest.mark.transaction
-    def test_transaction_with_delete(self, clean_users):
-        """测试事务中的删除操作"""
+    def test_transaction_decorator_with_delete(self, clean_users):
+        """测试装饰器方式事务中的删除操作"""
         # 先插入数据
-        clean_users.create({'name': 'ToDelete', 'email': 'todelete@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+        clean_users.create({'name': 'DecoratorToDelete', 'email': 'todelete@test.com', 'age': 25, 'status': 1, 'score': 80.0})
         
+        @User.transaction
         def delete_operation():
-            clean_users.where('name', 'ToDelete').delete()
+            clean_users.where('name', 'DecoratorToDelete').delete()
             return True
         
-        result = clean_users.transaction(delete_operation)
+        result = delete_operation()
         assert result is True
         
         # 验证数据已删除
-        user = clean_users.where('name', 'ToDelete').first()
+        user = clean_users.where('name', 'DecoratorToDelete').first()
         assert user is None or user == {}
     
     @pytest.mark.transaction
-    def test_transaction_partial_failure(self, clean_users, clean_orders):
-        """测试部分失败的事务"""
+    def test_transaction_decorator_partial_failure(self, clean_users, clean_orders):
+        """测试装饰器方式部分失败的事务"""
         # 插入用户
-        clean_users.create({'name': 'PartialFail', 'email': 'partial@test.com', 'age': 25, 'status': 1, 'score': 80.0})
-        user = clean_users.where('name', 'PartialFail').first()
+        clean_users.create({'name': 'DecoratorPartialFail', 'email': 'partial@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+        user = clean_users.where('name', 'DecoratorPartialFail').first()
         user_id = user['id'] if isinstance(user, dict) else user.id
         
+        @User.transaction
         def partial_ops():
             # 创建订单
             clean_orders.create({'user_id': user_id, 'order_no': 'ORD001', 'amount': 100.00, 'status': 1})
@@ -225,9 +275,28 @@ class TestTransactionComplex:
             raise Exception('Partial failure')
         
         with pytest.raises(Exception):
-            clean_users.transaction(partial_ops)
+            partial_ops()
         
         # 验证用户分数未更新
-        user = clean_users.where('name', 'PartialFail').first()
+        user = clean_users.where('name', 'DecoratorPartialFail').first()
         score = user['score'] if isinstance(user, dict) else user.score
         assert float(score) == 80.0
+    
+    @pytest.mark.transaction
+    def test_transaction_decorator_with_kwargs(self, clean_users):
+        """测试装饰器方式带关键字参数的事务"""
+        @User.transaction
+        def create_user_with_kwargs(name, email, **kwargs):
+            data = {'name': name, 'email': email, 'status': 1, 'score': 80.0}
+            data.update(kwargs)
+            clean_users.create(data)
+            return True
+        
+        result = create_user_with_kwargs('KwargsUser', 'kwargs@test.com', age=35)
+        assert result is True
+        
+        # 验证数据已提交
+        user = clean_users.where('name', 'KwargsUser').first()
+        assert user is not None
+        age = user['age'] if isinstance(user, dict) else user.age
+        assert age == 35
