@@ -5,9 +5,9 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="simpysqls_hks",
-    version="0.0.1",
+    version="0.0.2",
     author="jeanku, liubin, Hocassian",
-    author_email="",
+    author_email="hokaso@qq.com",
     description="A simple mysql orm base on pymysql",
     long_description=long_description,
     long_description_content_type="text/markdown",

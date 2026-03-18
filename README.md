@@ -8,7 +8,7 @@
 
 # 安装
 ```
-pip install simpysqls
+pip install simpysqls-hks
 ```
 
 # 初始化
