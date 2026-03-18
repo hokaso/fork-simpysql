@@ -4,9 +4,9 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name="simpysqls",
-    version="0.5.13",
-    author="jeanku, liubin",
+    name="simpysqls_hks",
+    version="0.0.1",
+    author="jeanku, liubin, Hocassian",
     author_email="",
     description="A simple mysql orm base on pymysql",
     long_description=long_description,
