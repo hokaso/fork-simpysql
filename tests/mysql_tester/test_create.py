@@ -31,7 +31,32 @@ class TestCreate:
         # 验证数据已插入
         count = clean_users.where('name', 'like', '用户%').count()
         assert count == 3
-    
+
+    @pytest.mark.create
+    def test_create_batch_heterogeneous_keys_raises(self, clean_users):
+        """批量插入各行字段不一致时，应明确报错，而非生成列/值错位的非法 SQL"""
+        rows = [
+            {'name': 'HetA', 'email': 'heta@test.com', 'age': 1, 'status': 1, 'score': 1.0},
+            {'name': 'HetB', 'email': 'hetb@test.com', 'age': 2, 'status': 1},  # 缺少 score
+        ]
+        with pytest.raises(Exception, match="identical columns"):
+            clean_users.create(rows)
+
+    @pytest.mark.create
+    def test_create_batch_same_keys_different_order(self, clean_users):
+        """各行字段相同但顺序不同时，值应按列名正确对齐（不能错灌）"""
+        rows = [
+            {'name': 'OrderA', 'email': 'oa@test.com', 'age': 10, 'status': 1, 'score': 1.0},
+            {'score': 2.0, 'status': 1, 'age': 20, 'email': 'ob@test.com', 'name': 'OrderB'},
+        ]
+        clean_users.create(rows)
+
+        b = clean_users.where('name', 'OrderB').first()
+        assert b is not None
+        assert (b['age'] if isinstance(b, dict) else b.age) == 20
+        assert float(b['score'] if isinstance(b, dict) else b.score) == 2.0
+        assert (b['email'] if isinstance(b, dict) else b.email) == 'ob@test.com'
+
     @pytest.mark.create
     def test_create_with_extra_fields(self, clean_users):
         """测试插入时忽略非表字段"""
@@ -273,29 +298,62 @@ class TestReplace:
 
 class TestLastId:
     """测试 lastid() 方法"""
-    
+
     @pytest.mark.create
     def test_lastid_after_create(self, clean_users):
-        """测试 create() 后获取 lastid"""
-        data = {
+        """create() 后 lastid() 必须等于真实写入的自增 id（而非任意非空值）"""
+        clean_users.create({
             'name': 'LastIdTest',
             'email': 'lastid@test.com',
             'age': 25,
             'status': 1,
-            'score': 80.0
-        }
-        clean_users.create(data)
+            'score': 80.0,
+        })
         last_id = clean_users.lastid()
-        
-        # lastid 应该返回一个数字
-        assert last_id is not None or last_id == 0
-    
+        real = clean_users.where('name', 'LastIdTest').first()
+        real_id = real['id'] if isinstance(real, dict) else real.id
+
+        assert last_id is not None, "lastid() 不应为 None"
+        assert last_id == real_id, f"lastid()={last_id} 应等于真实写入 id={real_id}"
+
+    @pytest.mark.create
+    def test_lastid_chained_after_create(self, clean_users):
+        """README 文档用法：create(...).lastid() 链式调用应返回该行 id"""
+        last_id = clean_users.create({
+            'name': 'LastIdChain',
+            'email': 'lastidchain@test.com',
+            'age': 30,
+            'status': 1,
+            'score': 88.0,
+        }).lastid()
+        real = clean_users.where('name', 'LastIdChain').first()
+        real_id = real['id'] if isinstance(real, dict) else real.id
+        assert last_id == real_id, f"链式 lastid()={last_id} 应等于真实写入 id={real_id}"
+
+    @pytest.mark.create
+    def test_lastid_sequential_creates(self, clean_users):
+        """连续多次插入，每次 lastid() 都应等于对应行真实 id
+
+        回归用例：连接池模式下每条语句换连接，旧实现用 select last_insert_id()
+        会读到另一条连接的会话值（稳定差一 / 首次为 None）。
+        """
+        for i in range(5):
+            clean_users.create({
+                'name': f'LastIdSeq{i}',
+                'email': f'lastidseq{i}@test.com',
+                'age': 20 + i,
+                'status': 1,
+                'score': 80.0,
+            })
+            last_id = clean_users.lastid()
+            real = clean_users.where('name', f'LastIdSeq{i}').first()
+            real_id = real['id'] if isinstance(real, dict) else real.id
+            assert last_id == real_id, f"第{i}次: lastid()={last_id} != 真实 id={real_id}"
+
     @pytest.mark.create
     def test_lastid_returns_none_when_empty(self, clean_users):
-        """测试无数据时 lastid() 返回 None"""
-        # 在空表上调用 lastid
+        """无数据时 lastid() 返回 None 或整数（不应抛错）"""
         last_id = clean_users.lastid()
-        # 可能返回 None 或 0
         assert last_id is None or isinstance(last_id, int)
 
 

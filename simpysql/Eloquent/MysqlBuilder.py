@@ -146,7 +146,7 @@ class MysqlBuilder(BaseBuilder):
 
     def update(self, data):
         # 增加安全防护：禁止无条件全表更新
-        if not self.__where__ and not self.__orwhere__ and not self.__whereor__:
+        if not self._has_conditions():
             raise Exception("Update missing WHERE clause. This will update the entire table!")
 
         if data and isinstance(data, dict):
@@ -159,6 +159,9 @@ class MysqlBuilder(BaseBuilder):
     def increment(self, key, amount=1):
         if not (isinstance(amount, int) and amount > 0):
             raise ValueError('increment amount must be a positive integer')
+        # 与 update/delete 一致：禁止无条件的全表自增
+        if not self._has_conditions():
+            raise Exception("Increment missing WHERE clause. This will update the entire table!")
         data = {}
         data[key] = '{}+{}'.format(expr.format_column(key, self.__model__), str(amount))
         data = self._set_crease_update_time(data)
@@ -167,6 +170,9 @@ class MysqlBuilder(BaseBuilder):
     def decrement(self, key, amount=1):
         if not (isinstance(amount, int) and amount > 0):
             raise ValueError('decrement amount must be a positive integer')
+        # 与 update/delete 一致：禁止无条件的全表自减
+        if not self._has_conditions():
+            raise Exception("Decrement missing WHERE clause. This will update the entire table!")
         data = {}
         data[key] = '{}-{}'.format(expr.format_column(key, self.__model__), str(amount))
         data = self._set_crease_update_time(data)
@@ -218,12 +224,13 @@ class MysqlBuilder(BaseBuilder):
         return self
 
     def lastid(self):
-        data = self._get_connection().execute(self._compile_lastid())
-        return data[0][0] if data and data[0] and data[0][0] else None
+        # 连接池模式下每条语句各用一条连接，不能再开新连接查 last_insert_id()，
+        # 否则会读到另一条连接的会话值。这里直接复用插入所在连接缓存的 lastrowid。
+        return self._get_connection().last_insert_id()
 
     def delete(self):
         # 增加安全防护：禁止无条件全表删除
-        if not self.__where__ and not self.__orwhere__ and not self.__whereor__:
+        if not self._has_conditions():
             raise Exception("Delete missing WHERE clause. This will delete the entire table!")
 
         return self._get_connection().execute(self._compile_delete())
@@ -419,7 +426,7 @@ class MysqlBuilder(BaseBuilder):
         return "insert ignore into {} {} values {}".format(self._tablename(), self._columnize(data[0]), self._valueize(data))
 
     def _compile_update(self, data):
-        where_clause = ''.join([self._compile_where(), self._compile_whereor(), self._compile_orwhere()])
+        where_clause = self._compile_conditions()
         joinsql = ''.join(self._compile_leftjoin())
         # 如果有 JOIN，需要在 SET 子句中添加表别名前缀，避免字段歧义
         if self.__join__:
@@ -436,10 +443,11 @@ class MysqlBuilder(BaseBuilder):
     def _compile_increment(self, data):
         subsql = ','.join(
             ['{}={}'.format(expr.format_column(index, self.__model__), value) for index, value in data.items()])
-        return "update {} set {}{}".format(self._tablename(), subsql, self._compile_where())
+        # 修复：原先只拼 _compile_where()，会静默丢弃 orwhere / whereor 条件
+        return "update {} set {}{}".format(self._tablename(), subsql, self._compile_conditions())
 
     def _compile_delete(self):
-        where_clause = ''.join([self._compile_where(), self._compile_whereor(), self._compile_orwhere()])
+        where_clause = self._compile_conditions()
         joinsql = ''.join(self._compile_leftjoin())
         # MySQL DELETE JOIN 语法: DELETE T1 FROM table1 T1 JOIN table2 T2 ON ...
         # 如果有 JOIN，需要使用特殊语法
@@ -452,18 +460,20 @@ class MysqlBuilder(BaseBuilder):
             return 'delete {} from {}{}{}'.format(main_table_ref, self._tablename(), joinsql, where_clause)
         return 'delete from {}{}'.format(self._tablename(), where_clause)
 
-    def _compile_lastid(self):
-        return 'select last_insert_id() as lastid'
-
     def _columnize(self, columns):
         # 强制格式化为 (`col1`, `col2`) 形式，避免单元素末尾多逗号
         return '({})'.format(','.join(['`{}`'.format(c) for c in columns]))
 
     def _valueize(self, data):
-        # 同样避免元组转字符串的坑，确保值被正确格式化
+        # 列名取自 data[0]；批量插入各行字段集合必须一致，否则列与值会错位。
+        # 同时按首行列序取值，避免「同字段不同顺序」导致的静默错灌。
+        keys = list(data[0].keys())
+        key_set = set(keys)
         values_list = []
         for index in data:
-            row_values = ','.join([str(expr.format_string(v)) for v in index.values()])
+            if set(index.keys()) != key_set:
+                raise Exception('batch insert rows must have identical columns')
+            row_values = ','.join([str(expr.format_string(index[k])) for k in keys])
             values_list.append('({})'.format(row_values))
         return ','.join(values_list)
 
@@ -477,7 +487,13 @@ class MysqlBuilder(BaseBuilder):
         return '' if self.__limit__ is None else ' limit {}'.format(self.__limit__)
 
     def _compile_offset(self):
-        return '' if self.__offset__ is None else ' offset {}'.format(self.__offset__)
+        if self.__offset__ is None:
+            return ''
+        # MySQL 中 OFFSET 必须配合 LIMIT，单独 OFFSET 是语法错误；
+        # 无 limit 时补一个最大 BIGINT 作为占位（MySQL 官方推荐写法）。
+        if self.__limit__ is None:
+            return ' limit 18446744073709551615 offset {}'.format(self.__offset__)
+        return ' offset {}'.format(self.__offset__)
 
     def _compile_lock(self):
         return '' if self.__lock__ is None else self.__lock__
@@ -502,6 +518,14 @@ class MysqlBuilder(BaseBuilder):
         if self.__having__:
             return self.__having__
         return ''
+
+    def _has_conditions(self):
+        # 是否存在任意 where / orwhere / whereor 条件（用于全表写防护）
+        return bool(self.__where__ or self.__orwhere__ or self.__whereor__)
+
+    def _compile_conditions(self):
+        # 组合 where / whereor / orwhere 三类条件，供 update / delete / increment 复用
+        return ''.join([self._compile_where(), self._compile_whereor(), self._compile_orwhere()])
 
     def _compile_where(self):
         if len(self.__where__) > 0:
@@ -681,7 +705,9 @@ class MysqlBuilder(BaseBuilder):
         return data
 
     def transaction(self, callback):
-        return self._get_connection().transaction(callback)
+        # 与类级 DBModel.transaction 保持一致：返回「需调用的包装器」（也可作装饰器），
+        # 必须再调用一次才会真正执行，例如 Model.where(...).transaction(fn)()
+        return self.transaction_wrapper(callback)
 
     def transaction_wrapper(self, callback):
         return self._get_connection().transaction_wrapper(callback)

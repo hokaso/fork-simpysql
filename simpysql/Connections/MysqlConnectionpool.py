@@ -8,9 +8,10 @@ class Connectionpool():
     _instance = None
 
     def __new__(cls, *args, **kwargs):
+        # 修复：原先 return 写在 if 内部，第二次实例化会返回 None
         if not cls._instance:
-            cls._instance = super(Connectionpool, cls).__new__(cls, *args, **kwargs)
-            return cls._instance
+            cls._instance = super(Connectionpool, cls).__new__(cls)
+        return cls._instance
 
     def connection(self, pro_db_config, database):
         if self._pool.get(database, None) is None:

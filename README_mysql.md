@@ -314,12 +314,12 @@ data = ModelDemo.where('id', '>=', 1150).take(5).data()
 
 # 数据库事务
 ``` python
-方法1:
+方法1（注意结尾的 ()，transaction 返回的是需调用的包装器，漏掉 () 事务不会执行）:
 def demo():
     ModelDemo.where('id', 42).update({'name': "44", 'token_name': '444'})
     ModelDemo.where('id', 43).update({'name': "44", 'token_name': '444'})
     return True
-data = ModelDemo.transaction(demo)
+data = ModelDemo.transaction(demo)()
 
 方法2:
 @ModelDemo.transaction

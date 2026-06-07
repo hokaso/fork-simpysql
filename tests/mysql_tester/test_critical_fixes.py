@@ -37,13 +37,14 @@ class TestCriticalFixes:
 
         def outer_transaction():
             clean_users.create({'name': 'OuterTx', 'email': 'outer@test.com', 'age': 20, 'status': 1, 'score': 80.0})
-            # 嵌套调用另一个事务
-            clean_users.transaction(inner_transaction)
+            # 嵌套调用另一个事务（transaction 返回包装器，必须加 () 才会执行）
+            clean_users.transaction(inner_transaction)()
             # 故意抛出异常，触发外层回滚
             raise Exception("Trigger Rollback")
 
+        # 注意：transaction(fn) 返回的是需调用的包装器，必须加结尾的 () 才会真正执行
         with pytest.raises(Exception, match="Trigger Rollback"):
-            clean_users.transaction(outer_transaction)
+            clean_users.transaction(outer_transaction)()
 
         # 修复前：inner_transaction 会获取新连接并清空全局事务标志，导致 outer 异常时，无法回滚 inner 和 outer 之前的修改。
         # 修复后：内外层复用同一个事务连接，触发异常后应当全部回滚。

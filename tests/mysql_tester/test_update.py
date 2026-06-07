@@ -200,6 +200,31 @@ class TestIncrement:
         updated_time = updated['updated_at'] or updated.updated_at
         assert updated_time >= original_time
 
+    @pytest.mark.update
+    def test_increment_honors_orwhere(self, clean_users):
+        """increment 必须包含 orwhere 条件（回归：旧实现 _compile_increment 只拼 where，静默丢弃 orwhere）"""
+        clean_users.create({'name': 'IncOrA', 'email': 'incora@test.com', 'age': 10, 'status': 1, 'score': 80.0})
+        clean_users.create({'name': 'IncOrB', 'email': 'incorb@test.com', 'age': 10, 'status': 1, 'score': 80.0})
+        clean_users.create({'name': 'IncOrC', 'email': 'incorc@test.com', 'age': 10, 'status': 1, 'score': 80.0})
+
+        # where(A) or where(B)：A、B 都应被自增，C 不受影响
+        affected = clean_users.where('name', 'IncOrA').orwhere('name', 'IncOrB').increment('age', 5)
+        assert affected == 2, f"orwhere 应使两行被更新，实际受影响 {affected} 行"
+
+        a = clean_users.where('name', 'IncOrA').first()
+        b = clean_users.where('name', 'IncOrB').first()
+        c = clean_users.where('name', 'IncOrC').first()
+        assert (a['age'] if isinstance(a, dict) else a.age) == 15
+        assert (b['age'] if isinstance(b, dict) else b.age) == 15
+        assert (c['age'] if isinstance(c, dict) else c.age) == 10, "未命中条件的行不应被修改"
+
+    @pytest.mark.update
+    def test_increment_requires_where(self, clean_users):
+        """无任何条件的 increment 应被拦截，防止全表自增（与 update/delete 一致）"""
+        clean_users.create({'name': 'IncGuard', 'email': 'incguard@test.com', 'age': 10, 'status': 1, 'score': 80.0})
+        with pytest.raises(Exception, match="Increment missing WHERE clause"):
+            clean_users.increment('age')
+
 
 class TestDecrement:
     """测试 decrement() 方法"""
@@ -286,6 +311,13 @@ class TestDecrement:
         updated = clean_users.where('name', 'DecrementTime').first()
         updated_time = updated['updated_at'] or updated.updated_at
         assert updated_time >= original_time
+
+    @pytest.mark.update
+    def test_decrement_requires_where(self, clean_users):
+        """无任何条件的 decrement 应被拦截，防止全表自减（与 update/delete 一致）"""
+        clean_users.create({'name': 'DecGuard', 'email': 'decguard@test.com', 'age': 10, 'status': 1, 'score': 80.0})
+        with pytest.raises(Exception, match="Decrement missing WHERE clause"):
+            clean_users.decrement('age')
 
 
 class TestUpdateSQL:

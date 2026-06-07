@@ -118,3 +118,19 @@ class TestSpecialDataTypes:
             # 注意：取出来的 score 类型取决于 pymysql 的 cursor 配置，这里主要测试插入和查询不报错
         except Exception as e:
             pytest.fail(f"无法正确处理 Decimal 类型的入库转换: {str(e)}")
+
+
+class TestConnectionPoolSingleton:
+    """测试连接池单例实现"""
+
+    @pytest.mark.edge
+    def test_connectionpool_new_returns_same_instance(self):
+        """回归：__new__ 的 return 曾写在 if 内部，导致第二次实例化返回 None"""
+        from simpysql.Connections.MysqlConnectionpool import Connectionpool
+
+        a = Connectionpool()
+        b = Connectionpool()
+
+        assert a is not None, "第一次实例化不应为 None"
+        assert b is not None, "第二次实例化不应为 None（曾因 return 位置错误返回 None）"
+        assert a is b, "Connectionpool 应为单例，多次实例化返回同一对象"

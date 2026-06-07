@@ -23,6 +23,10 @@ class MysqlConnection(Connection):
     def _get_pool_connection(self):
         return connectionpool.connection(self.parse_config(self._config), self._database)
 
+    # 返回当前线程最近一次 insert/replace 产生的自增 id（无则 None）
+    def last_insert_id(self):
+        return getattr(self._local, 'last_insert_id', None)
+
     def execute(self, sql, cursorclass=None):
         self.log(sql)
 
@@ -44,6 +48,12 @@ class MysqlConnection(Connection):
                 data = cursor.fetchall()
             else:
                 data = affected_rows
+
+            # 在连接归还前，缓存本次插入产生的自增 id（按线程隔离）。
+            # 连接池模式下 lastid() 不能再开新连接查询 last_insert_id()，
+            # 必须复用插入语句所在的这条连接的值。
+            if sql_stripped.startswith(('insert', 'replace')):
+                self._local.last_insert_id = cursor.lastrowid
 
             # 非事务状态下，单条语句执行完立即 commit
             if not in_transaction:

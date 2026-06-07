@@ -133,6 +133,28 @@ class TestTakeAndOffset:
         assert 'limit 5' in sql.lower()
         assert 'offset 10' in sql.lower()
 
+    @pytest.mark.select
+    def test_offset_without_limit_sql(self, user_model):
+        """offset 不配 take 时，SQL 必须自动补 LIMIT（单独 OFFSET 在 MySQL 中是语法错误）"""
+        sql = user_model.offset(5).tosql().lower()
+        assert 'offset 5' in sql
+        assert 'limit' in sql, "offset 无 limit 时必须自动补 LIMIT，否则非法 SQL"
+
+    @pytest.mark.select
+    def test_offset_without_limit_executes(self, clean_users):
+        """offset 不配 take 时应能真正执行
+
+        回归用例：旧实现生成 'select ... offset n'（缺 LIMIT），在 MySQL 中是语法错误。
+        """
+        for i in range(5):
+            clean_users.create({
+                'name': f'OffsetExec{i}', 'email': f'offsetexec{i}@test.com',
+                'age': 20 + i, 'status': 1, 'score': 80.0,
+            })
+        rows = clean_users.where('name', 'like', 'OffsetExec%').orderby('id', 'asc').offset(2).get()
+        # 跳过前 2 条，应剩 3 条
+        assert len(rows) == 3, f"offset(2) 无 take 应返回剩余 3 行，实际 {len(rows)} 行"
+
 
 class TestOrderBy:
     """测试 orderby() 方法"""

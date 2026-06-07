@@ -168,6 +168,36 @@ class TestTransactionInstanceMethod:
         user = clean_users.where('name', 'InstanceCommit').first()
         assert user is not None
 
+    @pytest.mark.transaction
+    def test_builder_level_transaction_commit(self, clean_users):
+        """Builder 实例级事务：Model.where(...).transaction(fn)() 应与类级一致，调用后执行并提交"""
+        def create_user():
+            clean_users.create({'name': 'BuilderTx', 'email': 'buildertx@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+            return 'ok'
+
+        # where(...) 返回 builder 实例，.transaction 命中 MysqlBuilder.transaction（已统一为返回包装器）
+        result = clean_users.where('status', 1).transaction(create_user)()
+        assert result == 'ok'
+
+        user = clean_users.where('name', 'BuilderTx').first()
+        assert user is not None
+
+    @pytest.mark.transaction
+    def test_builder_level_transaction_rollback(self, clean_users):
+        """Builder 实例级事务异常时应回滚"""
+        clean_users.create({'name': 'BuilderTxRb', 'email': 'buildertxrb@test.com', 'age': 25, 'status': 1, 'score': 80.0})
+
+        def failed():
+            clean_users.where('name', 'BuilderTxRb').update({'age': 999})
+            raise Exception('boom')
+
+        with pytest.raises(Exception, match='boom'):
+            clean_users.where('status', 1).transaction(failed)()
+
+        user = clean_users.where('name', 'BuilderTxRb').first()
+        age = user['age'] if isinstance(user, dict) else user.age
+        assert age == 25, "实例级事务回滚失败"
+
 
 class TestTransactionClassMethod:
     """测试类级别的 transaction 方法"""
