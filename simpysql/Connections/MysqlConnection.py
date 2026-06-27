@@ -21,7 +21,11 @@ class MysqlConnection(Connection):
 
     # 获取一个新的连接池连接
     def _get_pool_connection(self):
-        return connectionpool.connection(self.parse_config(self._config), self._database)
+        return connectionpool.connection(
+            self.parse_config(self._config),
+            self._database,
+            self.parse_pool_config(self._config),
+        )
 
     # 返回当前线程最近一次 insert/replace 产生的自增 id（无则 None）
     def last_insert_id(self):
@@ -105,7 +109,7 @@ class MysqlConnection(Connection):
         return cls._instance.get(database, None)
 
     def parse_config(self, config):
-        return {
+        parsed = {
             'host': config.get('DB_HOST', ''),
             'port': int(config.get('DB_PORT', '')),
             'user': config.get('DB_USER', ''),
@@ -113,3 +117,31 @@ class MysqlConnection(Connection):
             'db': config.get('DB_NAME', ''),
             'charset': config.get('DB_CHARSET', ''),
         }
+        # 可选连接超时（秒），透传给 pymysql.connect。
+        # 不配置 = 保持 pymysql 默认（connect 默认 10s、read/write 无超时），行为与旧版完全一致。
+        # 跨 WAN / 跨机房连库时强烈建议配置 read/write_timeout，避免链路抖动把调用线程无限挂死。
+        for env_key, pymysql_key in (
+            ('DB_CONNECT_TIMEOUT', 'connect_timeout'),
+            ('DB_READ_TIMEOUT', 'read_timeout'),
+            ('DB_WRITE_TIMEOUT', 'write_timeout'),
+        ):
+            value = config.get(env_key)
+            if value not in (None, ''):
+                parsed[pymysql_key] = int(value)
+        return parsed
+
+    def parse_pool_config(self, config):
+        # 可选连接池参数（DBUtils PooledDB）。不配置 = 使用 MysqlConnectionpool 内置默认值，
+        # 行为与旧版完全一致。跨 WAN 建议设置有限的 DB_POOL_MAX_USAGE 以回收长寿连接。
+        pool = {}
+        for env_key, pool_key in (
+            ('DB_POOL_MAX', 'maxconnections'),
+            ('DB_POOL_MIN_CACHED', 'mincached'),
+            ('DB_POOL_MAX_CACHED', 'maxcached'),
+            ('DB_POOL_MAX_USAGE', 'maxusage'),
+            ('DB_POOL_PING', 'ping'),
+        ):
+            value = config.get(env_key)
+            if value not in (None, ''):
+                pool[pool_key] = int(value)
+        return pool

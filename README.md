@@ -36,6 +36,30 @@ DB_CHARSET=utf8mb4
 #LOG_DIR=/home/logs/python/                     #关闭日志
 ```
 
+# 连接加固（跨 WAN / 跨机房，0.0.4+，全部可选）
+
+以下 .env 键**不配 = 行为与旧版完全一致**（无超时、内置默认连接池）；仅在连接异地/跨机房数据库时建议开启，避免链路抖动把调用线程无限挂死。
+
+``` python
+[cloud]
+DB_TYPE=mysql
+DB_HOST=...
+DB_PORT=3306
+DB_NAME=...
+DB_USER=...
+DB_PASSWORD=...
+DB_CHARSET=utf8mb4
+# —— 以下均可选 ——
+DB_CONNECT_TIMEOUT=5      # pymysql connect_timeout（秒）
+DB_READ_TIMEOUT=120      # pymysql read_timeout（秒）；消灭无限挂死的关键
+DB_WRITE_TIMEOUT=120     # pymysql write_timeout（秒）
+DB_POOL_MAX=10           # PooledDB maxconnections
+DB_POOL_MIN_CACHED=2     # PooledDB mincached
+DB_POOL_MAX_CACHED=5     # PooledDB maxcached
+DB_POOL_MAX_USAGE=1000   # PooledDB maxusage（到达即回收连接；默认 None=不回收）
+DB_POOL_PING=1           # PooledDB ping（取连接时校验级别）
+```
+
 # 创建表model
 
 创建数据库model 并继承simpysql.DBModel:
